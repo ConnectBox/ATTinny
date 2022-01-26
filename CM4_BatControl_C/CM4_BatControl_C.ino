@@ -47,22 +47,29 @@
 *   Cleanup of code...
 *   Battery Logic: see description of function next_bat()
 *   
+* Version B:  
+*   Add watchdog timer code; change loop time to 800 msec (was 80 msec)
+*   
 */
 
 #include <Wire.h>           // for I2C
+#include<avr/wdt.h>         // for watchdog timer
 #include "ATTiny88_pins.h"  // the "" format looks for this file in the project directory
 
 /// VERSION NUMBER ///
-#define VERSION_NUMBER 0x0A   // rev level of this code
+#define VERSION_NUMBER 0x0C   // rev level of this code
 
 // ADCs used to read battery voltages differentially
 #define VCC_SENSE   ADC2    // ADC to read AC_IN line in CB (5V => AD2 of 0.90 V)
 
 // Timing constants
 // By experiment, the clock is running slow by factor of 8 (8 MHz clock with scale down of 8)
-//  so define all time constants are expressed in ms/8 cycles
-#define LOOP_DELAY       10   // minimum delay around the main loop (10 => 80 msec)
-#define SETTLE_TIME      12   // 12=96 msec (time between ADC readings)
+//  so define all time constants are expressed in 8 msec lsb
+//  Note that this factor does NOT apply to the watchdog timer (WDT) settings
+
+// minimum delay around the main loop... (25 => 200 msec)
+//  NOTE: don't make this too long! We have a 1 second watchdog running!
+#define LOOP_DELAY       25   
 
 // Time variables to handle next decision time
 unsigned long currentTime;
@@ -94,10 +101,19 @@ int probe = 0xee;
 int probe1 = 0xe1;
 int probe2 = 0xe2;
 int probe3 = 0xe3;
-
+int heartbeat = 0;
 
 void setup() 
 {
+  MCUSR = 0;      // clear all interrupt flags (the step you don't usually find in examples)
+  wdt_reset();
+  cli();          // clear interrupts?
+  wdt_disable();  //Disable WDT
+  sei();          // enable interrupts
+
+  // housekeeping before enabling the WDT
+  // delay (1000);  // why??
+  
   analogReference(DEFAULT);    // reference = Vcc => 1023 (0x3FF) counts
 
   // set all sense lines to INPUTS 
@@ -105,6 +121,8 @@ void setup()
   for (int n=0; n<4; n++){
     pinMode(battSense[n], INPUT);
   }
+
+  pinMode(PC3,OUTPUT);      // create heartbeat
 
   // Set battEna control for Battery 1 (index == 0) to OUTPUT and ON
   //  (This battery is the default battery)
@@ -126,6 +144,8 @@ void setup()
   Wire.begin (I2C_ADDRESS);     // set I2C address
   Wire.onReceive(DataReceive);  // I2C Handlers 
   Wire.onRequest(DataRequest);
+
+  wdt_enable(WDTO_1S);      // enable WDT with a (real) timeout of 1 sec
 }
 
 
@@ -137,6 +157,10 @@ void loop()
 {
   int nextBat;
 
+  heartbeat += 1;
+  heartbeat = heartbeat %2;
+  digitalWrite(PC3, heartbeat);
+
   checkForBatteries();              // test for presence of all batteries at top of loop and clear batVoltage[] for missing bat
   
   currentTime = millis();           // check if our dwell time (12 sec) is done and we need to change batteries
@@ -147,7 +171,9 @@ void loop()
   }  
 
   loopIncrement += 1;     // debug...
-  delay (LOOP_DELAY);     // slow down loop
+  delay (LOOP_DELAY);     // slow down loop ...
+
+  wdt_reset();          // reset the WDT... if we fail to get here for 1 seconds, we will restart the ATTiny
 }
 
 
