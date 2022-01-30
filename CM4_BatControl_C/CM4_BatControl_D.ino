@@ -50,6 +50,14 @@
 * Version B:  
 *   Add watchdog timer code; change loop time to 800 msec (was 80 msec)
 *   
+* Version C:  
+*   Fix watchdog timer code.
+*   
+* Version D:  
+*   Add code to force 8 MHz clock prescale of 8; change battery swap to have 
+*   new turn on before old turn off to prevent premature shutdown by AXP209
+*   when input voltage dips during swap.
+*   
 */
 
 #include <Wire.h>           // for I2C
@@ -57,7 +65,7 @@
 #include "ATTiny88_pins.h"  // the "" format looks for this file in the project directory
 
 /// VERSION NUMBER ///
-#define VERSION_NUMBER 0x0C   // rev level of this code
+#define VERSION_NUMBER 0x0D   // rev level of this code
 
 // ADCs used to read battery voltages differentially
 #define VCC_SENSE   ADC2    // ADC to read AC_IN line in CB (5V => AD2 of 0.90 V)
@@ -109,6 +117,11 @@ void setup()
   wdt_reset();
   cli();          // clear interrupts?
   wdt_disable();  //Disable WDT
+  
+  // clock prescaler - 0000 = 8 MHZ, 0001 = 4 MHZ, 0010 = 2 MHZ, 0011 = 1 MHZ
+  CLKPR = (1<<CLKPCE);  // enable prescaler write
+  CLKPR = ((1<<CLKPS1) | (1<<CLKPS0));    // set to 1 MHz
+   
   sei();          // enable interrupts
 
   // housekeeping before enabling the WDT
@@ -297,8 +310,9 @@ void batterySelect (int batt)
 {
   noInterrupts();                     // turn off interrupts while we change FETs
   if (batt != currBat) {
-    digitalWrite (battEna[currBat], HIGH); //  Turn off currBat
-    digitalWrite (battEna[batt], LOW);     //  and turn on new battery
+    digitalWrite (battEna[batt], LOW);     //  turn on new battery
+    digitalWrite (battEna[currBat], HIGH); //   then turn off currBat (70 usec overlap)
+
   }
   // else we are not changing batteries so leave status quo
   interrupts();                       // turn interrupts back on
